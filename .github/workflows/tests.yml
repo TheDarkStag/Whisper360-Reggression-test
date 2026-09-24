@@ -2,17 +2,17 @@ name: Whisper360 UI Tests
 
 on:
   # Manual trigger — click "Run workflow" in the Actions tab, or `gh workflow run tests.yml`,
-  # whenever you want to pick that day yourself (no fixed schedule).
+  # whenever you want to pick that day yourself.
   workflow_dispatch: {}
-  # Uncomment to also run automatically on a schedule (cron is UTC). Example: every
-  # Monday and Thursday at 08:00 UTC.
-  # schedule:
-  #   - cron: '0 8 * * 1,4'
+  # Automatic run every Monday and Friday at 06:00 West Africa Time (UTC+1) = 05:00 UTC.
+  # Cron is always UTC — adjust the hour here if you ever change timezone.
+  schedule:
+    - cron: '0 5 * * 1,5'
 
 jobs:
   test:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
 
