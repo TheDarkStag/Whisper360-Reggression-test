@@ -1,0 +1,23 @@
+{
+  "name": "whisper360",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "playwright test",
+    "test:auth": "playwright test --project=auth",
+    "test:perf": "playwright test --project=perf",
+    "test:ui": "playwright test --ui",
+    "report": "playwright show-report"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "devDependencies": {
+    "@playwright/test": "^1.48.0",
+    "@types/node": "^26.5.1",
+    "dotenv": "^17.4.2",
+    "typescript": "^7.0.2"
+  }
+}
