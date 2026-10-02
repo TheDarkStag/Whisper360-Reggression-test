@@ -55,6 +55,10 @@ test.describe('AI Studio — Agent creation', () => {
   });
 
   test('Standard Agent Builder: create an agent draft, then delete it', async ({ page }) => {
+    // Cleanup deletes *every* agent named "New agent" (so a draft left behind by an earlier
+    // failed run can't pile up), at roughly 10s per deletion — give it room for a backlog.
+    test.setTimeout(240_000);
+
     await studio.openStandardBuilder();
     await studio.saveDraft();
 

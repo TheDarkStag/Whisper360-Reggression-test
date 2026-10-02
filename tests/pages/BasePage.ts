@@ -1,19 +1,78 @@
 import { Page, Locator, expect } from '@playwright/test';
 
+const pagesWithOverlayHandlers = new WeakSet<Page>();
+
+/**
+ * Several floating overlays mount on their own schedule — often a second or two *after* the
+ * page looks ready, and later on a slow CI runner than on a dev machine — and cover whatever
+ * a test is about to click. Dismissing them once after navigation isn't enough (that's what
+ * broke the first scheduled CI runs), so each is registered as a Playwright locator handler:
+ * it fires automatically, right before any click/fill or auto-waiting assertion, whenever
+ * the overlay is on screen.
+ */
+function registerOverlayHandlers(page: Page): void {
+  if (pagesWithOverlayHandlers.has(page)) return;
+  pagesWithOverlayHandlers.add(page);
+
+  // "Winnie" AI copilot popup — only the expanded panel (it has a Close button); the
+  // collapsed launcher pill doesn't cover anything and shouldn't trigger the handler.
+  const winnieOpen = page
+    .locator('aside[data-winnie-pilot]')
+    .filter({ has: page.getByRole('button', { name: /^Close / }) })
+    .first();
+  void page.addLocatorHandler(winnieOpen, async (overlay) => {
+    await overlay.getByRole('button', { name: /^Close / }).first().click();
+  });
+
+  // "Receive calls when Whisper360 is closed" banner — its dismiss control has no visible
+  // text, only aria-label="Not now".
+  void page.addLocatorHandler(page.getByRole('button', { name: 'Not now', exact: true }).first(), async (overlay) => {
+    await overlay.click();
+  });
+
+  // "Product session recording" notice, bottom-right, covers the email composer's Send.
+  void page.addLocatorHandler(page.getByRole('button', { name: 'Got it', exact: true }).first(), async (overlay) => {
+    await overlay.click();
+  });
+
+  // Customer-support webchat widget (`#whisper360-webchat`, toggled by `#w360-launcher`).
+  void page.addLocatorHandler(
+    page.locator('#whisper360-webchat').getByText('Start a conversation').first(),
+    async () => {
+      await page.locator('#w360-launcher').click();
+    }
+  );
+}
+
 /**
  * Shared behavior every module page object needs: dismissing the floating overlays that
  * auto-open across the app and can intercept clicks on whatever they happen to cover.
  */
 export class BasePage {
-  constructor(protected readonly page: Page) {}
+  constructor(protected readonly page: Page) {
+    registerOverlayHandlers(page);
+  }
 
   /**
-   * Dismisses the floating overlays that auto-mount across the app and can intercept
-   * clicks on whatever they happen to cover: the "Winnie" AI copilot popup, the
-   * customer-support webchat widget (`#whisper360-webchat`, toggled by `#w360-launcher`),
-   * and the "Receive calls when Whisper360 is closed" notification banner (dismissed via
-   * its "Not now" button — it has no visible label, just an aria-label). Call this after
-   * any navigation or major state change — fresh instances can mount per screen.
+   * Waits up to `timeout` for `locator` to become visible and reports whether it did.
+   * Use this — never `locator.isVisible({ timeout })` — to branch on something that may
+   * still be loading: `isVisible()` ignores any timeout and answers instantly, so it reports
+   * "not there" for anything that simply hasn't rendered yet (the cause of several CI-only
+   * failures).
+   */
+  protected async appears(locator: Locator, timeout = 5_000): Promise<boolean> {
+    try {
+      await locator.waitFor({ state: 'visible', timeout });
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Best-effort sweep for overlays that are already up right now. The locator handlers
+   * registered above are what protect against overlays that show up *later*; this just
+   * clears the ones present at the moment it's called (e.g. before a screenshot-style read).
    */
   async dismissCopilot(): Promise<void> {
     const closeButtons = this.page.getByRole('button', { name: /^Close / });
@@ -26,14 +85,16 @@ export class BasePage {
       }
     }
 
+    for (const name of ['Not now', 'Got it']) {
+      const button = this.page.getByRole('button', { name, exact: true });
+      if (await button.isVisible().catch(() => false)) {
+        await button.click({ timeout: 1000 }).catch(() => {});
+      }
+    }
+
     const webchatPanel = this.page.locator('#whisper360-webchat').getByText('Start a conversation');
     if (await webchatPanel.isVisible().catch(() => false)) {
       await this.page.locator('#w360-launcher').click({ timeout: 1000 }).catch(() => {});
-    }
-
-    const callAlertsBanner = this.page.getByRole('button', { name: 'Not now', exact: true });
-    if (await callAlertsBanner.isVisible().catch(() => false)) {
-      await callAlertsBanner.click({ timeout: 1000 }).catch(() => {});
     }
   }
 
@@ -59,14 +120,14 @@ export class BasePage {
    */
   async closeDialog(): Promise<void> {
     const cancel = this.page.getByRole('button', { name: 'Cancel', exact: true });
-    if (await cancel.isVisible({ timeout: 2000 }).catch(() => false)) {
+    if (await this.appears(cancel, 2_000)) {
       await cancel.click();
       await this.waitForModalBackdropGone();
       return;
     }
 
     const closeIcon = this.page.getByRole('button', { name: /^Close /i }).first();
-    if (await closeIcon.isVisible({ timeout: 2000 }).catch(() => false)) {
+    if (await this.appears(closeIcon, 2_000)) {
       await closeIcon.click();
       await this.waitForModalBackdropGone();
       return;

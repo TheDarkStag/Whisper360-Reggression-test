@@ -38,14 +38,5 @@ export default defineConfig({
       use: { ...devices['Desktop Chrome'], storageState: 'playwright/.auth/user.json' },
       dependencies: ['setup'],
     },
-    {
-      // Team Inbox perf diagnostics. trace: 'on' (vs. the suite-wide retain-on-failure)
-      // captures a full action-by-action network waterfall on every run, not just
-      // failures, since these tests exist to look at timing, not to catch regressions.
-      name: 'perf',
-      testMatch: /perf\.spec\.ts/,
-      use: { ...devices['Desktop Chrome'], storageState: 'playwright/.auth/user.json', trace: 'on' },
-      dependencies: ['setup'],
-    },
   ],
 });

@@ -101,23 +101,40 @@ lines of readable, quirk-free assertions.
   `<select>` doesn't offer a working reverse transition the way it does from
   Snoozed). The reply box (and saved-reply insertion) is a real `<textarea>` —
   same `.inputValue()` rule applies, not `.innerText()`.
-- A "Receive calls when Whisper360 is closed" notification banner can mount on
-  any screen and cover conversation controls; `BasePage.dismissCopilot()`
-  dismisses it via its "Not now" button (its only accessible label — the
-  banner itself has no visible text naming that button).
-- **Known issue, as of 2026-09-24:** the live app appears to be mid-rollout of
-  UI changes across at least two modules — AI Studio's "Create an agent"
-  screen was completely replaced (the old Standard Agent Builder / Build by AI
-  / Quick Start / Starter Template four-card screen is gone, replaced by a
-  "Bot Studio" vs. "Agent Studio" two-path screen), which breaks
-  `agent-creation.spec.ts` outright. Team Inbox's filter-panel labels also
-  intermittently failed an assertion (`getByText('Active work', {exact:true})`)
-  that had been stable for weeks, on a pill that was visibly on-screen and
-  unchanged in a screenshot — consistent with a partial/staged rollout rather
-  than a one-off flake. Don't invest more fixing effort into either until it's
-  confirmed which UI is the new stable one; a full selector-audit pass across
-  every spec is the right next step once that's settled, not spec-by-spec
-  patching against a moving target.
+- **Floating overlays** (the Winnie copilot popup, the "Receive calls when
+  Whisper360 is closed" banner, the "Product session recording" notice, the
+  support webchat widget) mount on their own schedule — often well after the
+  page looks ready, and later on a slow CI runner than on a dev machine — and
+  cover whatever a test is about to click. They're dismissed by Playwright
+  locator handlers registered in `BasePage` (they fire right before any
+  click/fill or auto-waiting assertion), not by a one-off call after
+  navigation, which is what made the first scheduled CI runs fail. If a new
+  overlay starts blocking clicks (the failure log names the blocking element:
+  "<…> intercepts pointer events"), add a handler for it in
+  `registerOverlayHandlers()`.
+- **Never use `locator.isVisible({ timeout })`** to branch on something that
+  may still be loading — Playwright ignores the timeout and answers instantly,
+  so it reports "not there" for anything that just hasn't rendered yet. Use
+  `BasePage.appears(locator, timeout)` (or `expect(...).toBeVisible()`).
+- **Filter pills carry a live count in their accessible name** ("Active work
+  26", "Resolved 4"), so an exact-text match on the bare label never matches.
+  Use `InboxPage.stateFilterPill()` (label plus optional number). Same idea
+  for the top ownership tabs ("Unread 5") — `selectTopTab()`.
+- **AI Studio's landing screen** (`/v2?suite=ai`) is now a "What are you
+  building today?" choice between Bot Studio and Agent Studio. Clicking
+  "Agent Studio" reaches the familiar overview with "Create an agent";
+  `StudioPage.gotoOverview()` waits for whichever screen loads and clicks
+  through if needed.
+- **The email composer's placeholder** reads "Write your email reply…" and its
+  button "Send email" (older builds: "Write your reply…" / "Send").
+  `EmailPage` matches both.
+- **Email conversations in Team Inbox use a different workspace** (email
+  thread plus a "Write your email reply…" composer plus a "Manage" panel) that
+  sits on top of the standard conversation header, so the standard controls
+  (Take ownership, Assign, Resolve, More controls, Saved replies) are present
+  in the page but covered and not clickable. The Team Inbox tests drive the
+  standard layout, which a Website-chat conversation uses — so their fixture
+  has to be a Website-chat conversation, not an email one.
 - `email.spec.ts` targets the "test email 2" ticket specifically (its subject
   line is itself a test artifact). If it's ever deleted/renamed, update
   `TEST_TICKET` in that file.

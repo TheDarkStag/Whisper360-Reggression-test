@@ -30,20 +30,20 @@ test.describe('Messenger / Team Inbox', () => {
 
   test('opening the filters panel shows state and channel filters', async ({ page }) => {
     await inbox.openFilters();
-    await expect(page.getByText('Active work', { exact: true })).toBeVisible();
-    await expect(page.getByText('Open now', { exact: true })).toBeVisible();
-    await expect(page.getByText('Waiting', { exact: true })).toBeVisible();
-    await expect(page.getByText('Resolved', { exact: true }).first()).toBeVisible();
+    await expect(inbox.stateFilterPill('Active work')).toBeVisible();
+    await expect(inbox.stateFilterPill('Open now')).toBeVisible();
+    await expect(inbox.stateFilterPill('Waiting')).toBeVisible();
+    await expect(inbox.stateFilterPill('Resolved')).toBeVisible();
     await expect(page.getByText('All channels', { exact: true })).toBeVisible();
   });
 
   test('applying and clearing a filter updates the conversation list without error', async ({ page }) => {
     await inbox.openFilters();
     await inbox.selectStateFilter('Resolved');
-    await expect(page.getByText('Active work', { exact: true })).toBeVisible();
+    await expect(inbox.stateFilterPill('Active work')).toBeVisible();
 
     await inbox.selectStateFilter('Active work');
-    await expect(page.getByText('Resolved', { exact: true }).first()).toBeVisible();
+    await expect(inbox.stateFilterPill('Resolved')).toBeVisible();
   });
 
   test('replying to a conversation sends the message', async ({ page }) => {

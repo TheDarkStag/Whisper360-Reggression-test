@@ -9,21 +9,33 @@ import { BasePage } from './BasePage';
  */
 export class StudioPage extends BasePage {
   /**
-   * `suite=ai` now lands on a "What are you building today?" choice screen (Bot Studio vs.
-   * Agent Studio) in front of the familiar AI Studio overview — not the overview itself.
-   * Clicking "Agent Studio" (`?suite=ai&studio=agent`) reaches that familiar overview, from
-   * which "Create an agent" etc. work exactly as before. If that choice screen is ever
-   * skipped (e.g. a remembered preference), this is a harmless no-op.
+   * Lands in Agent Studio — the familiar overview that carries "Create an agent". `suite=ai`
+   * can start from any of three places depending on the account's remembered choice:
+   *   1. the first-time "What are you building today?" screen (Bot Studio vs. Agent Studio),
+   *   2. straight into Bot Studio (the header dropdown "Switch AI studio" reads "bot"), or
+   *   3. already in Agent Studio.
+   * Wait for whichever one loads, then move to Agent Studio if we're not already there.
+   *
+   * The card is matched with `:not(option)` because the header dropdown also contains a
+   * (hidden) `<option>Agent Studio</option>` that a plain text match picks up first.
    */
   async gotoOverview(): Promise<void> {
     await this.page.goto('/v2?suite=ai');
-    await this.dismissCopilot();
 
-    const agentStudioChoice = this.page.getByText('Agent Studio', { exact: true });
-    if (await agentStudioChoice.isVisible({ timeout: 5000 }).catch(() => false)) {
-      await agentStudioChoice.click();
-      await this.dismissCopilot();
+    const createAgentButton = this.page.locator('[data-winnie="studio-new-agent"]');
+    const studioSwitcher = this.page.getByRole('combobox', { name: 'Switch AI studio' });
+    const agentStudioCard = this.page.locator(':not(option):text-is("Agent Studio")').first();
+
+    await createAgentButton.or(studioSwitcher).or(agentStudioCard).first().waitFor({ state: 'visible', timeout: 30_000 });
+
+    if (await createAgentButton.isVisible()) return;
+
+    if (await studioSwitcher.isVisible()) {
+      await studioSwitcher.selectOption('agent');
+    } else {
+      await agentStudioCard.click();
     }
+    await createAgentButton.waitFor({ state: 'visible', timeout: 30_000 });
   }
 
   async gotoAgentsList(): Promise<void> {

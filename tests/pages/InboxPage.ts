@@ -28,8 +28,18 @@ export class InboxPage extends BasePage {
     await this.page.getByText('Filters', { exact: false }).first().click();
   }
 
+  /**
+   * A state-filter pill. Its accessible name carries a live count ("Active work 26",
+   * "Resolved 4"), so match the label plus an optional number — an exact-text match on the
+   * bare label can never succeed, and a loose one can land on a hidden `<option>Resolved</option>`
+   * in the conversation-status select instead of the pill.
+   */
+  stateFilterPill(state: 'Active work' | 'Open now' | 'Waiting' | 'Resolved') {
+    return this.page.getByRole('button', { name: new RegExp(`^${state}(\\s+\\d+)?$`) });
+  }
+
   async selectStateFilter(state: 'Active work' | 'Open now' | 'Waiting' | 'Resolved'): Promise<void> {
-    await this.page.getByText(state, { exact: true }).first().click();
+    await this.stateFilterPill(state).click();
   }
 
   get replyBox() {
@@ -105,7 +115,7 @@ export class InboxPage extends BasePage {
       await this.openConversation(conversationName);
       await this.openMoreConversationControls();
 
-      if (!(await this.tagsHeaderRow().getByText(tagName, { exact: true }).isVisible({ timeout: 2000 }).catch(() => false))) {
+      if (!(await this.appears(this.tagsHeaderRow().getByText(tagName, { exact: true }), 2_000))) {
         return;
       }
 
@@ -292,7 +302,7 @@ export class InboxPage extends BasePage {
     await this.selectTopTab('All');
     await this.search(name);
 
-    if (await this.page.getByText(name, { exact: true }).first().isVisible({ timeout: 5000 }).catch(() => false)) {
+    if (await this.appears(this.page.getByText(name, { exact: true }).first(), 8_000)) {
       await this.openConversation(name);
       return;
     }

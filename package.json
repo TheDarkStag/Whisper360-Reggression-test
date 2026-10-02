@@ -6,7 +6,6 @@
   "scripts": {
     "test": "playwright test",
     "test:auth": "playwright test --project=auth",
-    "test:perf": "playwright test --project=perf",
     "test:ui": "playwright test --ui",
     "report": "playwright show-report"
   },

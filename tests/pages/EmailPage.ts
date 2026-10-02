@@ -10,15 +10,13 @@ export class EmailPage extends BasePage {
     // The suite=messenger&page=email query param isn't a reliable deep link (it can
     // silently land on the Dashboard instead), so navigate via the sidebar link explicitly.
     await this.page.goto('/v2?suite=messenger&page=inbox');
-    await this.dismissCopilot();
     await expect(this.page.getByText('Team Inbox').first()).toBeVisible({ timeout: 30_000 });
     // The nav click is occasionally swallowed right after the inbox first renders (a
     // hydration timing race, not a real bug) — retry it rather than failing outright.
     const newTicketButton = this.page.getByRole('button', { name: 'New ticket' });
     for (let attempt = 0; attempt < 3; attempt++) {
       await this.page.getByRole('button', { name: 'Email', exact: true }).click();
-      await this.dismissCopilot();
-      if (await newTicketButton.isVisible({ timeout: 8_000 }).catch(() => false)) return;
+      if (await this.appears(newTicketButton, 8_000)) return;
     }
     await expect(newTicketButton).toBeVisible({ timeout: 20_000 });
   }
@@ -36,13 +34,15 @@ export class EmailPage extends BasePage {
     await this.dismissCopilot();
   }
 
+  /** The composer's placeholder now reads "Write your email reply…" (it used to omit "email"). */
   get replyBody() {
-    return this.page.getByPlaceholder(/Write your reply/i);
+    return this.page.getByPlaceholder(/Write your (email )?reply/i);
   }
 
   async reply(message: string): Promise<void> {
     await this.replyBody.fill(message);
-    await this.page.getByRole('button', { name: 'Send', exact: true }).click();
+    // "Send" in older builds, "Send email" now; the regex excludes the neighboring "Send & wait".
+    await this.page.getByRole('button', { name: /^Send( email)?$/ }).click();
   }
 
   async takeOwnership(): Promise<void> {
