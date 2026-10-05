@@ -17,9 +17,17 @@ export class InboxPage extends BasePage {
     await this.page.goto('/v2?suite=messenger&page=inbox');
     await this.dismissCopilot();
     await expect(this.page.getByText('Team Inbox').first()).toBeVisible({ timeout: 30_000 });
+    // The nav label renders well before the inbox itself is interactive on a slow load.
+    await expect(this.page.getByPlaceholder('Search name, subject or message text')).toBeVisible({ timeout: 45_000 });
   }
 
+  /**
+   * Opens a conversation by name. Searches for it first: the list holds dozens of
+   * conversations ordered by recency and only renders the rows near the top, so a fixture
+   * that newer mail has pushed down isn't in the page at all until you search for it.
+   */
   async openConversation(name: string): Promise<void> {
+    await this.search(name);
     await this.page.getByText(name, { exact: true }).first().click();
     await this.dismissCopilot();
   }
@@ -80,7 +88,10 @@ export class InboxPage extends BasePage {
     // Enter is more reliable than the small "+" button, which sits close to overlays.
     await input.press('Enter');
 
-    await expect(this.tagsHeaderRow().getByText(tagName, { exact: true })).toBeVisible({ timeout: 20_000 });
+    // `.first()`: once the editor's suggestion list refreshes (fast on a healthy app) the new
+    // tag is listed there as well as in the header, so there can be two matches. Either one
+    // proves it was applied.
+    await expect(this.tagsHeaderRow().getByText(tagName, { exact: true }).first()).toBeVisible({ timeout: 20_000 });
   }
 
   /**
@@ -137,19 +148,53 @@ export class InboxPage extends BasePage {
     await this.page.getByRole('button', { name: 'Close Assignment & handling' }).click();
   }
 
-  async takeOwnership(): Promise<void> {
-    await this.page.getByRole('button', { name: 'Take ownership' }).first().click();
+  async closeAssignPanelIfOpen(): Promise<void> {
+    const close = this.page.getByRole('button', { name: 'Close Assignment & handling' });
+    if (await this.appears(close, 3_000)) await close.click();
+  }
+
+  private takeOwnershipButton() {
+    return this.page.getByRole('button', { name: 'Take ownership' }).first();
+  }
+
+  /** True when the named conversation is currently owned (it shows "Reassign"). */
+  private async isOwned(conversation: string): Promise<boolean> {
+    await this.findAndOpen(conversation);
+    return this.appears(this.page.getByRole('button', { name: 'Reassign', exact: true }), 8_000);
   }
 
   /**
-   * Assigns the currently-open conversation to a specific teammate from the "ASSIGN TO"
-   * chip list (opened via the Assign panel). Each chip's accessible text is the person's
-   * name followed by their role on a separate line (e.g. "Abraham\nadmin"), so an exact
-   * match on the name alone won't hit — use a substring match instead.
+   * Takes ownership of the open conversation and confirms it. A click made right after a
+   * conversation opens can be swallowed before its controls are wired up, so verify and retry.
+   * Verification must re-find the conversation by name: ownership moves it out of the
+   * "Unassigned" list and the app auto-selects a different one, so the "Take ownership" button
+   * on screen afterwards belongs to some other conversation — never click it a second time
+   * without re-opening this one first.
    */
-  async assignToTeammate(name: string): Promise<void> {
-    await this.openAssignPanel();
-    await this.page.getByText(name, { exact: false }).first().click();
+  async takeOwnership(conversation: string): Promise<void> {
+    for (let attempt = 0; attempt < 3; attempt++) {
+      if (attempt > 0) await this.openConversation(conversation);
+      await this.takeOwnershipButton().click();
+      if (await this.isOwned(conversation)) return;
+    }
+    throw new Error('Taking ownership did not take effect after 3 attempts.');
+  }
+
+  /**
+   * Assigns the open conversation to a specific teammate from the "ASSIGN TO" chip list
+   * (opened via the Assign panel), and confirms it by re-finding the conversation by name (see
+   * takeOwnership). A chip's accessible name is an avatar initial, the person's name and their
+   * role ("A Abraham admin"). A click made the instant the panel appears can be swallowed
+   * before the panel has finished loading, hence the verify-and-retry.
+   */
+  async assignToTeammate(conversation: string, name: string): Promise<void> {
+    for (let attempt = 0; attempt < 3; attempt++) {
+      if (attempt > 0) await this.openConversation(conversation);
+      await this.openAssignPanel();
+      await this.page.getByRole('button', { name: new RegExp(`\\b${name}\\b.*\\b(admin|owner|agent)\\b`) }).click();
+      if (await this.isOwned(conversation)) return;
+    }
+    throw new Error(`Assigning the conversation to ${name} did not take effect after 3 attempts.`);
   }
 
   async resolve(): Promise<void> {
@@ -158,7 +203,17 @@ export class InboxPage extends BasePage {
 
   // --- Saved replies ---
 
+  /**
+   * The composer's "Saved replies / Copilot / Help article" toolbar sits under a collapsed
+   * "+ Writing tools" toggle: the button is in the page but hidden until it's expanded. Read
+   * `aria-expanded` rather than guessing from visibility, so a toggle that's already open
+   * isn't clicked shut.
+   */
   async openSavedReplies(): Promise<void> {
+    const writingTools = this.page.getByRole('button', { name: /Writing tools/ });
+    if ((await writingTools.getAttribute('aria-expanded')) !== 'true') {
+      await writingTools.click();
+    }
     await this.page.getByText('Saved replies', { exact: true }).click();
   }
 
@@ -184,7 +239,10 @@ export class InboxPage extends BasePage {
   // --- Customer details ---
 
   async openMoreMenu(): Promise<void> {
-    await this.page.getByRole('button', { name: 'More', exact: true }).click();
+    // Shows "More" but its aria-label is "More actions", which is what the accessible name
+    // is (older builds: plain "More"). The regex excludes "More inbox controls" and
+    // "More conversation controls", which are different buttons.
+    await this.page.getByRole('button', { name: /^More( actions)?$/ }).click();
   }
 
   async openCustomerDetails(): Promise<void> {
@@ -198,10 +256,11 @@ export class InboxPage extends BasePage {
   }
 
   // --- More menu: Log a task / Macros / Create Support case ---
-  // These open a modal dialog (a `div.fixed.inset-0` backdrop, same component the tag
-  // editor's popover shares) rather than an inline panel. Only entry is verified here —
-  // each is closed via Cancel/close-icon/Escape (see BasePage.closeDialog) without
-  // submitting, so nothing persistent (a task, a macro run, a support case) is created.
+  // Log a task opens a modal dialog (closed via its Cancel button, see BasePage.closeDialog).
+  // Macros and Create Support case open a right-hand *drawer* instead, each with its own
+  // "Close <title>" button. Only entry and exit are verified: nothing is submitted, so no task,
+  // macro run or support case is created. (The Create Support case drawer has a real
+  // "Create Support case" submit button — never click that one.)
 
   async openLogTaskDialog(): Promise<void> {
     await this.openMoreMenu();
@@ -209,20 +268,19 @@ export class InboxPage extends BasePage {
     await expect(this.page.getByText('What needs to happen', { exact: true })).toBeVisible({ timeout: 10_000 });
   }
 
-  async openMacrosDialog(): Promise<void> {
+  async openMoreMenuDrawer(title: 'Macros' | 'Create Support case'): Promise<void> {
     await this.openMoreMenu();
-    await this.page.getByText('Macros', { exact: true }).click();
-    await expect(this.modalBackdrop()).toBeVisible({ timeout: 10_000 });
+    await this.page.getByText(title, { exact: true }).click();
+    await expect(this.drawerCloseButton(title)).toBeVisible({ timeout: 15_000 });
   }
 
-  async openCreateSupportCaseDialog(): Promise<void> {
-    await this.openMoreMenu();
-    await this.page.getByText('Create Support case', { exact: true }).click();
-    await expect(this.modalBackdrop()).toBeVisible({ timeout: 10_000 });
+  async closeMoreMenuDrawer(title: 'Macros' | 'Create Support case'): Promise<void> {
+    await this.drawerCloseButton(title).click();
+    await expect(this.drawerCloseButton(title)).toBeHidden({ timeout: 15_000 });
   }
 
-  private modalBackdrop() {
-    return this.page.locator('div.fixed.inset-0').first();
+  private drawerCloseButton(title: string) {
+    return this.page.getByRole('button', { name: `Close ${title}`, exact: true });
   }
 
   // --- Follow-ups ---
@@ -266,6 +324,21 @@ export class InboxPage extends BasePage {
     await this.statusSelect().selectOption({ label });
   }
 
+  /**
+   * Moves the open Resolved conversation `name` back to Open, and confirms it. The status
+   * `<select>` is the way: on a resolved conversation the Resolve button is *disabled*.
+   *
+   * Once it leaves the Resolved list the app auto-selects a *different* conversation, so the
+   * select on screen no longer belongs to `name` — reading it (or clicking anything else,
+   * e.g. Resolve) would act on an unrelated conversation. So confirm by finding `name` again.
+   */
+  async reopen(name: string): Promise<void> {
+    await this.setStatus('Open');
+    await this.findAndOpen(name);
+    await this.openMoreConversationControls();
+    await expect.poll(() => this.currentStatus(), { timeout: 20_000 }).toBe('open');
+  }
+
   async currentStatus(): Promise<string> {
     // A native <select>'s own innerText lists every option, not just the selected one —
     // inputValue() (the selected option's value attribute, e.g. "open") is the reliable read.
@@ -281,10 +354,58 @@ export class InboxPage extends BasePage {
 
   // --- Ownership release ---
 
-  /** Hands a conversation you own back to the unassigned queue. */
+  /**
+   * Hands a conversation you own back to the unassigned queue, and confirms it. The drawer's
+   * button can swallow a click made right as the drawer appears (it hasn't finished loading),
+   * so verify — "Take ownership" is only enabled again once nobody owns it — and retry.
+   */
   async releaseOwnership(): Promise<void> {
-    await this.page.getByRole('button', { name: 'Reassign', exact: true }).click();
-    await this.page.getByText('Return to unassigned queue', { exact: true }).click();
+    const reassign = this.page.getByRole('button', { name: 'Reassign', exact: true });
+    const release = this.page.getByText('Return to unassigned queue', { exact: true });
+    const takeOwnership = this.takeOwnershipButton();
+    for (let attempt = 0; attempt < 3; attempt++) {
+      if (!(await release.isVisible())) await reassign.click();
+      if (!(await this.appears(release, 8_000))) continue;
+      await release.click();
+      try {
+        await expect(takeOwnership).toBeEnabled({ timeout: 10_000 });
+        return;
+      } catch {
+        // swallowed, or not applied yet — go round again
+      }
+    }
+    throw new Error('Could not return the conversation to the unassigned queue after 3 attempts.');
+  }
+
+  /**
+   * Cleanup helper: if the open conversation is assigned to anyone, return it to the
+   * unassigned queue and wait until that has taken effect. "Reassign" only exists while
+   * someone owns it, but it renders a moment after the conversation opens — an instant
+   * visibility check there silently skips the release, which is how the fixture got left
+   * "Assigned to Abraham". So wait for it before deciding.
+   */
+  async releaseOwnershipIfAssigned(): Promise<void> {
+    const reassign = this.page.getByRole('button', { name: 'Reassign', exact: true });
+    if (await this.appears(reassign, 10_000)) {
+      await this.releaseOwnership();
+      await expect(reassign).toBeHidden({ timeout: 30_000 });
+    }
+  }
+
+  /**
+   * Finds `name` from scratch (see findAndOpen) and reads its status. Use this instead of
+   * reading the status select on screen after an action that moves the conversation to a
+   * different list — the app then auto-selects another conversation, whose status is what
+   * the select shows. Returns 'unknown' if it can't be found right now, so it can be polled.
+   */
+  async statusOf(name: string): Promise<string> {
+    try {
+      await this.findAndOpen(name);
+      await this.openMoreConversationControls();
+      return await this.currentStatus();
+    } catch {
+      return 'unknown';
+    }
   }
 
   /**
@@ -294,22 +415,34 @@ export class InboxPage extends BasePage {
    * Used to safely apply a revert step after a state-mutating test action.
    *
    * There is no single "all states" filter pill — only Active work / Open now / Waiting /
-   * Resolved, each mutually exclusive. So this tries the state filter most likely to
-   * surface `name` (Active work, which also covers Snoozed) and falls back to Resolved.
+   * Resolved, each mutually exclusive. "Active work" already covers New / Open / Pending /
+   * Waiting / Snoozed, so trying it and then Resolved reaches every state the fixture can
+   * end up in. The search is cleared and retyped after each filter change: typing the same
+   * text again is a no-op, which leaves the new list unfiltered/stale.
    */
   async findAndOpen(name: string): Promise<void> {
     await this.goto();
     await this.selectTopTab('All');
-    await this.search(name);
-
-    if (await this.appears(this.page.getByText(name, { exact: true }).first(), 8_000)) {
-      await this.openConversation(name);
-      return;
-    }
-
     await this.openFilters();
-    await this.selectStateFilter('Resolved');
-    await this.search(name);
-    await this.openConversation(name);
+
+    const match = this.page.getByText(name, { exact: true }).first();
+    for (const state of ['Active work', 'Resolved'] as const) {
+      await this.selectStateFilter(state);
+      // Changing the filter reloads the list and can wipe a search typed a moment too early,
+      // so retype it until the result shows up rather than trusting a single attempt.
+      for (let attempt = 0; attempt < 3; attempt++) {
+        await this.search('');
+        await this.search(name);
+        if (await this.appears(match, 6_000)) {
+          await match.click();
+          await this.dismissCopilot();
+          return;
+        }
+      }
+    }
+    throw new Error(
+      `"${name}" wasn't found under Active work or Resolved (with the All owners tab). Was the ` +
+        `fixture conversation deleted or renamed? See "Test data notes" in the README.`
+    );
   }
 }

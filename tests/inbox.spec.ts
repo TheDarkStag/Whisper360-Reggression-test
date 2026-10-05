@@ -1,9 +1,12 @@
 import { test, expect } from '@playwright/test';
 import { InboxPage } from './pages/InboxPage';
 
-// The inbox spec targets the "Lolo" conversation specifically since it's a stable fixture
-// in this test workspace. If that conversation is ever deleted/renamed, update this const.
-const TEST_CONVERSATION = 'Lolo';
+// The inbox spec targets this conversation specifically since it's the designated fixture
+// in this test workspace. It has to be a *Website chat* conversation: email conversations
+// open a separate email workspace that covers the standard controls these tests click
+// (Take ownership, Assign, Resolve, ...), so they can't drive it. If it's ever deleted or
+// renamed, update this const (the previous fixture, "Lolo", was deleted — see README).
+const TEST_CONVERSATION = 'james bond';
 
 // A teammate in this workspace's "ASSIGN TO" list, used for the assign/unassign test.
 // If this person is ever removed from the workspace, update this const to another teammate.
@@ -12,6 +15,22 @@ const TEST_TEAMMATE = 'Abraham';
 // An existing saved reply in this workspace, used for the saved-reply-selection test.
 // If it's ever deleted/renamed, update this const.
 const TEST_SAVED_REPLY = { title: 'delivery postponed', snippet: 'we will attend to you shortly' };
+
+// Tests that change the fixture's state and put it back in a `finally` get a generous limit.
+// When a test hits its time limit Playwright aborts it mid-flight — including a half-finished
+// `finally` — which leaves the fixture changed (Resolved, Snoozed, assigned to someone) and
+// makes every later test, and every later run, fail until someone fixes it by hand. That is
+// exactly how the first runs against this fixture broke.
+const STATE_CHANGING_TEST_TIMEOUT = 360_000;
+
+/** statusOf() but retried: the fixture can be briefly unfindable on a slow load. */
+async function knownStatusOf(inbox: InboxPage, name: string): Promise<string> {
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const status = await inbox.statusOf(name);
+    if (status !== 'unknown') return status;
+  }
+  throw new Error(`Could not find "${name}" to put it back — its status may have been left changed. Check it by hand.`);
+}
 
 test.describe('Messenger / Team Inbox', () => {
   let inbox: InboxPage;
@@ -58,6 +77,7 @@ test.describe('Messenger / Team Inbox', () => {
   });
 
   test('adding and removing a tag on a conversation', async ({ page }) => {
+    test.setTimeout(STATE_CHANGING_TEST_TIMEOUT);
     await inbox.openConversation(TEST_CONVERSATION);
     const tagName = `qa-test-${Date.now()}`;
 
@@ -120,77 +140,71 @@ test.describe('Messenger / Team Inbox', () => {
     await expect(page.getByText(TEST_CONVERSATION, { exact: true }).first()).toBeVisible({ timeout: 10_000 });
   });
 
-  test('resolving a conversation updates its status, then reopens it', async ({ page }) => {
+  test('resolving a conversation updates its status, then reopens it', async () => {
+    test.setTimeout(STATE_CHANGING_TEST_TIMEOUT);
     await inbox.openConversation(TEST_CONVERSATION);
-    await inbox.openMoreConversationControls();
 
     try {
       await inbox.resolve();
-      await expect.poll(() => inbox.currentStatus(), { timeout: 20_000 }).toBe('resolved');
+      // Resolving moves the conversation to another list and the app auto-selects a different
+      // one, so the status select on screen is no longer this conversation's: find it again.
+      await expect.poll(() => inbox.statusOf(TEST_CONVERSATION), { timeout: 120_000 }).toBe('resolved');
     } finally {
-      // Resolved conversations can drop out of the current view, so re-locate by name
-      // rather than assuming the panel still shows this conversation. "Resolve" is a
-      // toggle (clicking it again un-resolves) — that's the reliable way back to Open;
-      // the status <select> itself doesn't offer a working reverse transition from
-      // Resolved the way it does from Snoozed.
-      await inbox.findAndOpen(TEST_CONVERSATION);
-      await inbox.openMoreConversationControls();
-      if ((await inbox.currentStatus()) === 'resolved') {
-        await inbox.resolve();
+      if ((await knownStatusOf(inbox, TEST_CONVERSATION)) === 'resolved') {
+        await inbox.reopen(TEST_CONVERSATION);
       }
-      await expect.poll(() => inbox.currentStatus(), { timeout: 20_000 }).toBe('open');
     }
   });
 
-  test('snoozing a conversation updates its status, then reopens it', async ({ page }) => {
+  test('snoozing a conversation updates its status, then reopens it', async () => {
+    test.setTimeout(STATE_CHANGING_TEST_TIMEOUT);
     await inbox.openConversation(TEST_CONVERSATION);
     await inbox.openMoreConversationControls();
 
     try {
       await inbox.snoozeFor('1 hour');
-      await expect.poll(() => inbox.currentStatus(), { timeout: 20_000 }).toBe('snoozed');
+      await expect.poll(() => inbox.currentStatus(), { timeout: 45_000 }).toBe('snoozed');
     } finally {
+      // A snoozed conversation stays in the Active work list, so the status select on screen
+      // is still this conversation's. The change can take a while to apply — wait for it.
       await inbox.findAndOpen(TEST_CONVERSATION);
       await inbox.openMoreConversationControls();
-      await inbox.setStatus('Open');
-      await expect.poll(() => inbox.currentStatus(), { timeout: 20_000 }).toBe('open');
+      if ((await inbox.currentStatus()) !== 'open') {
+        await inbox.setStatus('Open');
+      }
+      await expect.poll(() => inbox.currentStatus(), { timeout: 90_000 }).toBe('open');
     }
   });
 
   test('taking ownership assigns the conversation, then releases it', async ({ page }) => {
+    test.setTimeout(STATE_CHANGING_TEST_TIMEOUT);
     await inbox.openConversation(TEST_CONVERSATION);
 
     try {
-      await inbox.takeOwnership();
-      await expect(page.getByRole('button', { name: 'Reassign', exact: true })).toBeVisible({ timeout: 20_000 });
+      await inbox.takeOwnership(TEST_CONVERSATION);
+      await expect(page.getByRole('button', { name: 'Reassign', exact: true })).toBeVisible({ timeout: 30_000 });
     } finally {
       // Taking ownership can immediately remove the conversation from the current view
       // (the app auto-selects a different one), so re-locate by name before releasing it.
       await inbox.findAndOpen(TEST_CONVERSATION);
-      const reassignButton = page.getByRole('button', { name: 'Reassign', exact: true });
-      if (await reassignButton.isVisible().catch(() => false)) {
-        await inbox.releaseOwnership();
-      }
-      await expect(page.getByText('Unassigned', { exact: true }).first()).toBeVisible({ timeout: 15_000 });
+      await inbox.releaseOwnershipIfAssigned();
+      await expect(page.getByRole('button', { name: 'Take ownership' }).first()).toBeEnabled({ timeout: 30_000 });
     }
   });
 
   test('assigning to a specific teammate, then unassigning', async ({ page }) => {
+    test.setTimeout(STATE_CHANGING_TEST_TIMEOUT);
     await inbox.openConversation(TEST_CONVERSATION);
 
     try {
-      await inbox.assignToTeammate(TEST_TEAMMATE);
-      await expect(page.getByRole('button', { name: 'Reassign', exact: true })).toBeVisible({ timeout: 20_000 });
-      await expect(page.getByText(TEST_TEAMMATE, { exact: false }).first()).toBeVisible();
+      await inbox.assignToTeammate(TEST_CONVERSATION, TEST_TEAMMATE);
+      // "Reassign" isn't shown while the assignment panel is open.
+      await inbox.closeAssignPanelIfOpen();
+      await expect(page.getByRole('button', { name: 'Reassign', exact: true })).toBeVisible({ timeout: 30_000 });
     } finally {
-      // Same reasoning as the ownership test above: an assignment change can knock the
-      // conversation out of the current view, so re-locate it before releasing.
       await inbox.findAndOpen(TEST_CONVERSATION);
-      const reassignButton = page.getByRole('button', { name: 'Reassign', exact: true });
-      if (await reassignButton.isVisible().catch(() => false)) {
-        await inbox.releaseOwnership();
-      }
-      await expect(page.getByText('Unassigned', { exact: true }).first()).toBeVisible({ timeout: 15_000 });
+      await inbox.releaseOwnershipIfAssigned();
+      await expect(page.getByRole('button', { name: 'Take ownership' }).first()).toBeEnabled({ timeout: 30_000 });
     }
   });
 
@@ -211,10 +225,10 @@ test.describe('Messenger / Team Inbox', () => {
     await inbox.closeDialog();
     await expect(page.getByText('What needs to happen', { exact: true })).not.toBeVisible();
 
-    await inbox.openMacrosDialog();
-    await inbox.closeDialog();
+    await inbox.openMoreMenuDrawer('Macros');
+    await inbox.closeMoreMenuDrawer('Macros');
 
-    await inbox.openCreateSupportCaseDialog();
-    await inbox.closeDialog();
+    await inbox.openMoreMenuDrawer('Create Support case');
+    await inbox.closeMoreMenuDrawer('Create Support case');
   });
 });

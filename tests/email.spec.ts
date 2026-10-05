@@ -2,7 +2,7 @@ import { test, expect } from '@playwright/test';
 import { EmailPage } from './pages/EmailPage';
 
 // "test email 2" is an existing fixture ticket in this test workspace (its subject line is
-// literally a test artifact), used here the same way "Lolo" is used in inbox.spec.ts — a
+// literally a test artifact), used here the same way inbox.spec.ts uses its fixture conversation — a
 // stable, safe-to-interact-with record for reply/status flows. If it's ever deleted or
 // renamed, update this const.
 const TEST_TICKET = 'test email 2';

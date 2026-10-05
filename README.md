@@ -70,7 +70,7 @@ On failure, Playwright captures a screenshot, video, and trace automatically
 3. Add the new spec file to the `authenticated` project's `testMatch` regex in
    `playwright.config.ts`.
 4. If the module has its own designated "safe to interact with" test record
-   (like Team Inbox's "Lolo" or Email's "test email 2"), name it clearly (a
+   (like Team Inbox's "james bond" or Email's "test email 2"), name it clearly (a
    `TEST_*` constant at the top of the spec) and note it in "Test data notes"
    below so the next person doesn't wonder why that one conversation/ticket/
    record gets touched by automation.
@@ -84,10 +84,19 @@ lines of readable, quirk-free assertions.
 - This workspace ("Liberty Assured") is a designated test account, so specs
   interact with real conversations/tickets/tags/agents in it directly
   (confirmed with the workspace owner — see brief).
-- `inbox.spec.ts` targets the "Lolo" conversation specifically. If that
-  conversation is ever deleted/renamed, update `TEST_CONVERSATION` in that file.
-- The resolve/snooze/take-ownership/assign-teammate tests mutate Lolo's real
-  status and assignment, then revert it in a `finally` block via
+- `inbox.spec.ts` targets the "james bond" conversation specifically (a Website
+  chat contact). If it's ever deleted/renamed, update `TEST_CONVERSATION` in
+  that file. Its predecessor, "Lolo", was deleted from the workspace — which
+  silently broke 13 tests at once and showed up first as failures in the
+  scheduled CI runs. The fixture must be a **Website chat** conversation (see
+  "Email conversations in Team Inbox" below); if the whole inbox spec suddenly
+  fails with "waiting for getByText('james bond')", check that conversation
+  still exists before debugging selectors.
+- The composer's "Saved replies / Copilot / Help article" toolbar is collapsed
+  under a "+ Writing tools" toggle; `InboxPage.openSavedReplies()` expands it
+  (reading `aria-expanded`) before clicking.
+- The resolve/snooze/take-ownership/assign-teammate tests mutate the fixture's
+  real status and assignment, then revert it in a `finally` block via
   `InboxPage.findAndOpen()` — a status/ownership change can knock the
   conversation out of whatever view was active (the app auto-selects a
   different one), so cleanup re-locates it by name rather than assuming the
@@ -96,11 +105,25 @@ lines of readable, quirk-free assertions.
   `findAndOpen()` tries the default view first and falls back to the Resolved
   filter. The "Conversation status" control is a real native `<select>` — read
   its value with `.inputValue()`, never `.innerText()` (which lists every
-  option, not the selected one). "Resolve" is a **toggle**: clicking it again
-  un-resolves — that's the reliable way back to Open from Resolved (the status
-  `<select>` doesn't offer a working reverse transition the way it does from
-  Snoozed). The reply box (and saved-reply insertion) is a real `<textarea>` —
-  same `.inputValue()` rule applies, not `.innerText()`.
+  option, not the selected one). To reopen a **Resolved** conversation use the
+  status `<select>` (`InboxPage.reopen()`): on a resolved conversation the
+  Resolve button is *disabled*, so clicking it just hangs until the test times
+  out and the fixture stays Resolved. (On 2026-09-24 a second click on Resolve
+  toggled it back — the app changed.) Once it leaves the Resolved list the app
+  auto-selects a *different* conversation, so never read the status select or
+  click Resolve right after reopening: it would act on an unrelated
+  conversation. `reopen()` finds the fixture again and confirms it. A cleanup that can't finish leaves the fixture changed, and then
+  every test that needs it fails on the next run — if the inbox suite fails
+  wholesale, check the fixture's status and owner first. The reply box (and
+  saved-reply insertion) is a real `<textarea>` — same `.inputValue()` rule
+  applies, not `.innerText()`.
+- `InboxPage.openConversation()` searches for the name before clicking. The
+  list holds dozens of conversations ordered by recency and only renders the
+  rows near the top, so a fixture that newer mail has pushed down isn't in the
+  page at all until you search for it.
+- The test workspace is on a **free trial** (the header banner counts down
+  "N days left"). Check what happens to it when the trial ends — a locked or
+  downgraded workspace would fail every test at once.
 - **Floating overlays** (the Winnie copilot popup, the "Receive calls when
   Whisper360 is closed" banner, the "Product session recording" notice, the
   support webchat widget) mount on their own schedule — often well after the
@@ -135,6 +158,19 @@ lines of readable, quirk-free assertions.
   in the page but covered and not clickable. The Team Inbox tests drive the
   standard layout, which a Website-chat conversation uses — so their fixture
   has to be a Website-chat conversation, not an email one.
+- **Macros and Create Support case are right-hand drawers**, not modals, each closed by
+  its own "Close <title>" button (`openMoreMenuDrawer` / `closeMoreMenuDrawer`). Tests open
+  and close them but never press their submit buttons. Don't sweep every `/^Close /` button
+  in a helper: that also closes "Close Assignment & handling".
+- **Ownership changes: verify by re-finding the conversation by name.** Taking ownership or
+  assigning moves the conversation out of the default "Unassigned" list and the app
+  auto-selects a different one, so the on-screen "Take ownership" button (and the "Assigned
+  to" badge) then describe some other conversation. `takeOwnership()` / `assignToTeammate()`
+  / `releaseOwnership()` therefore re-open the fixture and check for "Reassign" before
+  retrying, because a click right after a conversation opens can be swallowed. Never retry
+  by clicking whatever is on screen.
+- A second Winnie panel shape (`div[data-winnie-dropdown]`) also appears over the inbox
+  tabs; the overlay handler covers both.
 - `email.spec.ts` targets the "test email 2" ticket specifically (its subject
   line is itself a test artifact). If it's ever deleted/renamed, update
   `TEST_TICKET` in that file.

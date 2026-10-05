@@ -15,9 +15,13 @@ function registerOverlayHandlers(page: Page): void {
   pagesWithOverlayHandlers.add(page);
 
   // "Winnie" AI copilot popup — only the expanded panel (it has a Close button); the
-  // collapsed launcher pill doesn't cover anything and shouldn't trigger the handler.
+  // collapsed launcher pill doesn't cover anything and shouldn't trigger the handler. It
+  // renders in two shapes: `aside[data-winnie-pilot]` (bottom-right) and
+  // `div[data-winnie-dropdown]` (anchored over the inbox tabs, with "Start interactive
+  // tour" / "Don't pop up again"). Always use Close — "Don't pop up again" would change a
+  // saved setting on the account.
   const winnieOpen = page
-    .locator('aside[data-winnie-pilot]')
+    .locator('aside[data-winnie-pilot], div[data-winnie-dropdown]')
     .filter({ has: page.getByRole('button', { name: /^Close / }) })
     .first();
   void page.addLocatorHandler(winnieOpen, async (overlay) => {
