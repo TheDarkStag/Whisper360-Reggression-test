@@ -95,26 +95,36 @@ export class InboxPage extends BasePage {
   }
 
   /**
-   * Removes `tagName` from the currently-open conversation. Reloads the page first: the
-   * tag dropdown's suggestion list only picks up a tag created moments ago after a reload.
+   * Removes `tagName` from the open conversation and confirms the chip is gone. Reloads the
+   * page first: the tag dropdown's suggestion list only picks up a tag created moments ago
+   * after a reload. The click on the tag in the dropdown can be swallowed on a slow machine
+   * (the chip then stays), so verify and redo the whole sequence from a fresh load.
    */
   async removeTag(tagName: string, conversationName: string): Promise<void> {
-    await this.page.reload();
-    await expect(this.page.getByText('Team Inbox').first()).toBeVisible({ timeout: 30_000 });
-    await this.dismissCopilot();
-    await this.openConversation(conversationName);
-    await this.openMoreConversationControls();
-    await this.tagEditorTrigger().first().click();
+    for (let attempt = 0; attempt < 3; attempt++) {
+      await this.page.reload();
+      await expect(this.page.getByText('Team Inbox').first()).toBeVisible({ timeout: 30_000 });
+      await this.dismissCopilot();
+      await this.openConversation(conversationName);
+      await this.openMoreConversationControls();
+      await this.tagEditorTrigger().first().click();
 
-    const dropdown = this.tagDropdown();
-    await expect(dropdown.getByText(tagName, { exact: true })).toBeVisible({ timeout: 20_000 });
-    await dropdown.getByText(tagName, { exact: true }).click();
+      const dropdown = this.tagDropdown();
+      await expect(dropdown.getByText(tagName, { exact: true })).toBeVisible({ timeout: 20_000 });
+      await dropdown.getByText(tagName, { exact: true }).click();
 
-    // The dropdown stays open after this click and, while open, is a DOM descendant of the
-    // same container as the header chips — so its own (now-unchecked) suggestion-list entry
-    // would otherwise still satisfy a header text match. Close it via its backdrop first.
-    await this.closePopoverViaBackdrop();
-    await expect(this.tagsHeaderRow().getByText(tagName, { exact: true })).toHaveCount(0, { timeout: 20_000 });
+      // The dropdown stays open after this click and, while open, is a DOM descendant of the
+      // same container as the header chips — so its own (now-unchecked) suggestion-list entry
+      // would otherwise still satisfy a header text match. Close it via its backdrop first.
+      await this.closePopoverViaBackdrop();
+      try {
+        await expect(this.tagsHeaderRow().getByText(tagName, { exact: true })).toHaveCount(0, { timeout: 12_000 });
+        return;
+      } catch {
+        // click swallowed, or not applied yet — go round again from a fresh load
+      }
+    }
+    throw new Error(`Tag "${tagName}" was still on the conversation after 3 removal attempts.`);
   }
 
   /** Best-effort: removes `tagName` if still applied, swallowing errors. Use in cleanup. */
@@ -350,6 +360,28 @@ export class InboxPage extends BasePage {
   async snoozeFor(duration: '1 hour' | '4 hours' | 'Tomorrow' | 'Next week'): Promise<void> {
     await this.page.getByRole('button', { name: 'Snooze', exact: true }).click();
     await this.page.getByText(duration, { exact: true }).click();
+  }
+
+  /**
+   * Snoozes the open conversation and confirms the status select reads "snoozed". The click on
+   * the duration can be swallowed on a slow machine, so verify and retry from a fresh open
+   * (a snoozed conversation stays in the Active work list, so the on-screen status is its own).
+   */
+  async snooze(conversation: string, duration: '1 hour' | '4 hours' | 'Tomorrow' | 'Next week'): Promise<void> {
+    for (let attempt = 0; attempt < 3; attempt++) {
+      if (attempt > 0) {
+        await this.openConversation(conversation);
+        await this.openMoreConversationControls();
+      }
+      await this.snoozeFor(duration);
+      try {
+        await expect.poll(() => this.currentStatus(), { timeout: 20_000 }).toBe('snoozed');
+        return;
+      } catch {
+        // swallowed, or not applied yet — go round again
+      }
+    }
+    throw new Error('Snoozing did not take effect after 3 attempts.');
   }
 
   // --- Ownership release ---

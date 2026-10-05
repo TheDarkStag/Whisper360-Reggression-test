@@ -162,8 +162,7 @@ test.describe('Messenger / Team Inbox', () => {
     await inbox.openMoreConversationControls();
 
     try {
-      await inbox.snoozeFor('1 hour');
-      await expect.poll(() => inbox.currentStatus(), { timeout: 45_000 }).toBe('snoozed');
+      await inbox.snooze(TEST_CONVERSATION, '1 hour');
     } finally {
       // A snoozed conversation stays in the Active work list, so the status select on screen
       // is still this conversation's. The change can take a while to apply — wait for it.
