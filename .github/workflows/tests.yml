@@ -33,6 +33,10 @@ jobs:
           TEST_PASSWORD: ${{ secrets.TEST_PASSWORD }}
         run: npx playwright test
 
+      - name: Publish results summary
+        if: always()
+        run: node scripts/summarize-results.mjs playwright-report-json/results.json >> "$GITHUB_STEP_SUMMARY"
+
       - name: Upload HTML report
         if: always()
         uses: actions/upload-artifact@v4

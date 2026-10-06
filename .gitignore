@@ -6,3 +6,4 @@ playwright/.auth/
 blob-report/
 .DS_Store
 .claude/
+playwright-report-json/

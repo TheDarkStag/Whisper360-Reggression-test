@@ -13,6 +13,7 @@ export default defineConfig({
   reporter: [
     ['html', { open: 'never' }],
     ['list'],
+    ['json', { outputFile: 'playwright-report-json/results.json' }],
   ],
   use: {
     baseURL: 'https://whisper360.io',
