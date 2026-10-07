@@ -1,4 +1,4 @@
-import { Page, expect } from '@playwright/test';
+import { Page, Locator, expect } from '@playwright/test';
 import { BasePage } from './BasePage';
 
 /**
@@ -59,9 +59,23 @@ export class InboxPage extends BasePage {
     await this.page.getByTestId('reply-send').click();
   }
 
+  /**
+   * Opens the "More conversation controls" panel (status select, Snooze, tags). Idempotent:
+   * the button toggles, so if the panel is already open (it can stay open across
+   * conversations) clicking again would close it — check for the panel's own Snooze button
+   * first (the status select can't be the marker: it is also in the conversation header), and
+   * confirm it appeared, retrying a swallowed click.
+   */
   async openMoreConversationControls(): Promise<void> {
-    await this.page.getByRole('button', { name: 'More conversation controls' }).click();
-    await this.dismissCopilot();
+    for (let attempt = 0; attempt < 3; attempt++) {
+      // A snoozed conversation shows a different label (e.g. "Snoozed until…"), hence the regex.
+      const snooze = this.page.getByRole('button', { name: /snooze/i }).first();
+      if (await this.appears(snooze, attempt === 0 ? 2_000 : 1_000)) return;
+      await this.page.getByRole('button', { name: 'More conversation controls' }).click();
+      await this.dismissCopilot();
+      if (await this.appears(snooze, 8_000)) return;
+    }
+    throw new Error('The "More conversation controls" panel did not open after 3 attempts.');
   }
 
   /** Opens the tag editor dropdown (label reads "Add" with no tags, an icon once tags exist). */
@@ -272,16 +286,33 @@ export class InboxPage extends BasePage {
   // macro run or support case is created. (The Create Support case drawer has a real
   // "Create Support case" submit button — never click that one.)
 
+  /**
+   * Opens the "More" menu, clicks `item`, and waits for `opened` — retrying the whole thing,
+   * since on a slow machine the menu can fail to open or swallow the click on its item.
+   */
+  private async chooseFromMoreMenu(item: string, opened: Locator, timeout = 10_000): Promise<void> {
+    for (let attempt = 0; attempt < 3; attempt++) {
+      await this.openMoreMenu();
+      await this.page.getByText(item, { exact: true }).click({ timeout: 10_000 });
+      if (await this.appears(opened, timeout)) return;
+    }
+    throw new Error(`"${item}" from the More menu did not open after 3 attempts.`);
+  }
+
+  /**
+   * The "Log a task" form: a right-hand activity drawer with a Subject field, Cancel and
+   * "Save Activity" (never clicked here). Older builds showed "What needs to happen" instead.
+   */
+  get logTaskForm(): Locator {
+    return this.page.getByPlaceholder('Subject', { exact: true }).or(this.page.getByText('What needs to happen', { exact: true }));
+  }
+
   async openLogTaskDialog(): Promise<void> {
-    await this.openMoreMenu();
-    await this.page.getByText('Log a task', { exact: true }).click();
-    await expect(this.page.getByText('What needs to happen', { exact: true })).toBeVisible({ timeout: 10_000 });
+    await this.chooseFromMoreMenu('Log a task', this.logTaskForm.first());
   }
 
   async openMoreMenuDrawer(title: 'Macros' | 'Create Support case'): Promise<void> {
-    await this.openMoreMenu();
-    await this.page.getByText(title, { exact: true }).click();
-    await expect(this.drawerCloseButton(title)).toBeVisible({ timeout: 15_000 });
+    await this.chooseFromMoreMenu(title, this.drawerCloseButton(title), 15_000);
   }
 
   async closeMoreMenuDrawer(title: 'Macros' | 'Create Support case'): Promise<void> {

@@ -222,7 +222,7 @@ test.describe('Messenger / Team Inbox', () => {
 
     await inbox.openLogTaskDialog();
     await inbox.closeDialog();
-    await expect(page.getByText('What needs to happen', { exact: true })).not.toBeVisible();
+    await expect(inbox.logTaskForm.first()).not.toBeVisible();
 
     await inbox.openMoreMenuDrawer('Macros');
     await inbox.closeMoreMenuDrawer('Macros');
