@@ -37,6 +37,13 @@ jobs:
         if: always()
         run: node scripts/summarize-results.mjs playwright-report-json/results.json >> "$GITHUB_STEP_SUMMARY"
 
+      - name: Email results
+        if: always()
+        continue-on-error: true
+        env:
+          REPORT_WEBHOOK_URL: ${{ secrets.REPORT_WEBHOOK_URL }}
+        run: node scripts/send-report.mjs playwright-report-json/results.json
+
       - name: Upload HTML report
         if: always()
         uses: actions/upload-artifact@v4

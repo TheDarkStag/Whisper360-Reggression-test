@@ -1,6 +1,7 @@
 // Turns Playwright's JSON results into a Markdown summary (shown on the GitHub run page).
 // Usage: node scripts/summarize-results.mjs [results.json]  >> "$GITHUB_STEP_SUMMARY"
-import { readFileSync, existsSync } from 'node:fs';
+import { existsSync } from 'node:fs';
+import { loadRows } from './lib-results.mjs';
 
 const file = process.argv[2] ?? 'test-results/results.json';
 if (!existsSync(file)) {
@@ -8,30 +9,7 @@ if (!existsSync(file)) {
   process.exit(0);
 }
 
-const report = JSON.parse(readFileSync(file, 'utf8'));
-const rows = [];
-
-function walk(suite, titles = []) {
-  const path = suite.title && !suite.title.endsWith('.ts') ? [...titles, suite.title] : titles;
-  for (const spec of suite.specs ?? []) {
-    for (const t of spec.tests ?? []) {
-      const results = t.results ?? [];
-      const last = results[results.length - 1];
-      const ms = results.reduce((n, r) => n + (r.duration ?? 0), 0);
-      const err = (last?.error?.message ?? '').replace(/\x1b\[[0-9;]*m/g, '').split('\n').find((l) => l.trim()) ?? '';
-      rows.push({
-        file: spec.file,
-        name: [...path, spec.title].join(' › '),
-        status: t.status, // expected | unexpected | flaky | skipped
-        retries: Math.max(results.length - 1, 0),
-        ms,
-        err: err.trim().slice(0, 200),
-      });
-    }
-  }
-  for (const s of suite.suites ?? []) walk(s, path);
-}
-for (const s of report.suites ?? []) walk(s);
+const rows = loadRows(file);
 
 const count = (st) => rows.filter((r) => r.status === st).length;
 const passed = count('expected'), failed = count('unexpected'), flaky = count('flaky'), skipped = count('skipped');
